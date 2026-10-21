@@ -1,0 +1,178 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:anyps5_remote/connection/session.dart';
+import 'package:anyps5_remote/protocol/packets.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+/// The launcher's side, scripted: a WebSocket control channel and a UDP pad port.
+class FakeLauncher {
+  FakeLauncher({this.askFirst = false, this.echo = false});
+
+  final bool askFirst;
+  final bool echo;
+  late HttpServer http;
+  late RawDatagramSocket udp;
+  final hellos = <Map<String, dynamic>>[];
+  final packets = <(DateTime, Uint8List)>[];
+  final sockets = <WebSocket>[];
+
+  int get port => http.port;
+
+  Future<void> start({int port = 0}) async {
+    http = await HttpServer.bind(InternetAddress.loopbackIPv4, port);
+    udp = await RawDatagramSocket.bind(InternetAddress.loopbackIPv4, 0);
+    udp.listen((event) {
+      if (event != RawSocketEvent.read) return;
+      final datagram = udp.receive();
+      if (datagram == null) return;
+      packets.add((DateTime.now(), datagram.data));
+      if (echo) {
+        Timer(const Duration(milliseconds: 4), () => udp.send(answer(datagram.data), datagram.address, datagram.port));
+      }
+    });
+    http.transform(WebSocketTransformer()).listen((socket) {
+      sockets.add(socket);
+      socket.listen((text) async {
+        final message = jsonDecode(text as String) as Map<String, dynamic>;
+        if (message['type'] != 'hello') return;
+        hellos.add(message);
+        if (askFirst && message['key'] == null) {
+          socket.add('{"type":"pairing","code":"4821"}');
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        }
+        socket.add(jsonEncode({'type': 'welcome', 'session': '42', 'udpPort': udp.port, 'macName': 'Test Mac', 'key': 'c3RvcmVkLWtleQ=='}));
+      });
+    });
+  }
+
+  Uint8List answer(Uint8List input) {
+    final out = Uint8List(32);
+    final data = ByteData.sublistView(out);
+    data.setUint32(0, 0x4F525041, Endian.little);
+    data.setUint16(4, 1, Endian.little);
+    data.setUint16(6, 32, Endian.little);
+    data.setUint32(8, ByteData.sublistView(input).getUint32(8, Endian.little), Endian.little);
+    data.setUint32(12, 1000, Endian.little);
+    data.setUint64(16, ByteData.sublistView(input).getUint64(16, Endian.little), Endian.little);
+    return out;
+  }
+
+  Future<void> stop() async {
+    for (final socket in sockets) {
+      await socket.close();
+    }
+    await http.close(force: true);
+    udp.close();
+  }
+}
+
+Future<void> waitFor(bool Function() condition, {Duration timeout = const Duration(seconds: 3)}) async {
+  final deadline = DateTime.now().add(timeout);
+  while (!condition()) {
+    if (DateTime.now().isAfter(deadline)) throw TimeoutException('condition not met');
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+  }
+}
+
+void main() {
+  late SharedPreferences preferences;
+
+  setUp(() async {
+    SharedPreferences.setMockInitialValues({});
+    preferences = await SharedPreferences.getInstance();
+  });
+
+  test('pairs on first connection', () async {
+    final launcher = FakeLauncher(askFirst: true);
+    await launcher.start();
+    final session = Session(preferences: preferences, deviceName: 'Pixel 8');
+    final seen = <ConnectionStatus>[];
+    String? shownCode;
+    session.addListener(() {
+      seen.add(session.status);
+      if (session.status == ConnectionStatus.pairing) shownCode = session.code;
+    });
+    await session.connect(InternetAddress.loopbackIPv4, launcher.port);
+    await waitFor(() => session.status == ConnectionStatus.connected);
+    expect(seen, contains(ConnectionStatus.pairing));
+    expect(shownCode, '4821');
+    expect(session.code, isNull);
+    expect(session.macName, 'Test Mac');
+    expect(preferences.getString('key'), 'c3RvcmVkLWtleQ==');
+    expect(launcher.hellos.single['deviceName'], 'Pixel 8');
+    expect(launcher.hellos.single['protocol'], 1);
+    await session.close();
+    await launcher.stop();
+  });
+
+  test('sends state at least every 8 ms', () async {
+    final launcher = FakeLauncher();
+    await launcher.start();
+    final session = Session(preferences: preferences, deviceName: 'Pixel 8');
+    await session.connect(InternetAddress.loopbackIPv4, launcher.port);
+    await waitFor(() => session.status == ConnectionStatus.connected);
+    launcher.packets.clear();
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    expect(launcher.packets.length, greaterThanOrEqualTo(10));
+    final sequences = launcher.packets.map((packet) => ByteData.sublistView(packet.$2).getUint32(8, Endian.little)).toList();
+    for (var index = 1; index < sequences.length; index++) {
+      expect(sequences[index], greaterThan(sequences[index - 1]));
+    }
+    expect(ByteData.sublistView(launcher.packets.first.$2).getUint64(24, Endian.little), 42);
+    await session.close();
+    await launcher.stop();
+  });
+
+  test('sends at once on update', () async {
+    final launcher = FakeLauncher();
+    await launcher.start();
+    final session = Session(preferences: preferences, deviceName: 'Pixel 8');
+    await session.connect(InternetAddress.loopbackIPv4, launcher.port);
+    await waitFor(() => session.status == ConnectionStatus.connected);
+    await Future<void>.delayed(const Duration(milliseconds: 3));
+    final before = DateTime.now();
+    session.update(PadState()..buttons = PadButton.cross);
+    await waitFor(() => launcher.packets.any((packet) => ByteData.sublistView(packet.$2).getUint32(32, Endian.little) == PadButton.cross));
+    final first = launcher.packets.firstWhere((packet) => ByteData.sublistView(packet.$2).getUint32(32, Endian.little) == PadButton.cross);
+    expect(first.$1.difference(before).inMilliseconds, lessThan(5));
+    await session.close();
+    await launcher.stop();
+  });
+
+  test('measures latency from echoes', () async {
+    final launcher = FakeLauncher(echo: true);
+    await launcher.start();
+    final session = Session(preferences: preferences, deviceName: 'Pixel 8');
+    await session.connect(InternetAddress.loopbackIPv4, launcher.port);
+    await waitFor(() => session.status == ConnectionStatus.connected);
+    await waitFor(() => session.latencyMs != null);
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    expect(session.latencyMs, inInclusiveRange(1, 15));
+    await session.close();
+    await launcher.stop();
+  });
+
+  test('reconnects after the server restarts', () async {
+    final launcher = FakeLauncher(askFirst: true);
+    await launcher.start();
+    final session = Session(preferences: preferences, deviceName: 'Pixel 8');
+    await session.connect(InternetAddress.loopbackIPv4, launcher.port);
+    await waitFor(() => session.status == ConnectionStatus.connected);
+    final port = launcher.port;
+    await launcher.stop();
+    await waitFor(() => session.status != ConnectionStatus.connected);
+    final again = FakeLauncher(askFirst: true);
+    await again.start(port: port);
+    final seen = <ConnectionStatus>[];
+    session.addListener(() => seen.add(session.status));
+    await waitFor(() => session.status == ConnectionStatus.connected, timeout: const Duration(seconds: 4));
+    expect(seen, isNot(contains(ConnectionStatus.pairing)));
+    expect(again.hellos.single['key'], 'c3RvcmVkLWtleQ==');
+    await session.close();
+    await again.stop();
+  });
+}
