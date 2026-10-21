@@ -11,7 +11,12 @@ void main() {
       ..sticks = [255, 0, 128, 64]
       ..l2 = 200;
     state.touch[0] = TouchPoint(active: true, id: 3, x: 1919, y: 1079);
-    final bytes = encodeInput(sequence: 7, sentMicros: 123456, session: BigInt.from(99), state: state);
+    final bytes = encodeInput(
+      sequence: 7,
+      sentMicros: 123456,
+      session: BigInt.from(99),
+      state: state,
+    );
     expect(bytes.length, 80);
     expect(bytes.sublist(0, 4), [0x41, 0x50, 0x52, 0x49]);
     expect(bytes.sublist(4, 6), [1, 0]);
@@ -26,7 +31,12 @@ void main() {
   });
 
   test('encodes a session above 2^63', () {
-    final bytes = encodeInput(sequence: 0, sentMicros: 0, session: BigInt.parse('18446744073709551615'), state: PadState());
+    final bytes = encodeInput(
+      sequence: 0,
+      sentMicros: 0,
+      session: BigInt.parse('18446744073709551615'),
+      state: PadState(),
+    );
     expect(bytes.sublist(24, 32), List.filled(8, 0xFF));
   });
 
@@ -56,11 +66,21 @@ void main() {
   test('messages round trip as the launcher writes them', () {
     final hello = Hello(deviceID: 'A', deviceName: 'Pixel', key: null);
     expect(Message.fromJson(hello.toJson()), isA<Hello>());
-    final welcome = Message.fromJson('{"type":"welcome","session":"18446744073709551615","udpPort":5000,"macName":"Mac","key":"a2V5"}') as Welcome;
+    final welcome = Message.fromJson(
+      '{"type":"welcome","session":"18446744073709551615","udpPort":5000,"macName":"Mac","key":"a2V5"}',
+    ) as Welcome;
     expect(welcome.session, BigInt.parse('18446744073709551615'));
     expect(welcome.udpPort, 5000);
-    expect((Message.fromJson('{"type":"pairing","code":"0042"}') as Pairing).code, '0042');
-    expect((Message.fromJson('{"type":"rejected","reason":"busy"}') as Rejected).reason, 'busy');
+    expect(
+      (Message.fromJson('{"type":"pairing","code":"0042"}') as Pairing).code,
+      '0042',
+    );
+    expect(
+      (Message.fromJson(
+        '{"type":"rejected","reason":"busy"}',
+      ) as Rejected).reason,
+      'busy',
+    );
     expect(Message.fromJson('{"type":"bogus"}'), isNull);
     expect(Message.fromJson('not json'), isNull);
     expect(Latency(9.5).toJson(), '{"type":"latency","milliseconds":9.5}');

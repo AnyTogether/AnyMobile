@@ -50,7 +50,10 @@ class Session extends ChangeNotifier {
     final stored = preferences.getString('deviceID');
     if (stored != null) return stored;
     final random = Random.secure();
-    final id = List.generate(16, (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0')).join();
+    final id = List.generate(
+      16,
+      (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'),
+    ).join();
     preferences.setString('deviceID', id);
     return id;
   }
@@ -67,11 +70,23 @@ class Session extends ChangeNotifier {
     if (_closed || _host == null) return;
     _setStatus(ConnectionStatus.connecting);
     try {
-      final socket = await WebSocket.connect(Uri(scheme: 'ws', host: _host!.address, port: _port).toString())
-          .timeout(const Duration(seconds: 3));
+      final socket = await WebSocket.connect(
+        Uri(scheme: 'ws', host: _host!.address, port: _port).toString(),
+      ).timeout(const Duration(seconds: 3));
       _socket = socket;
-      socket.listen(_received, onDone: _lost, onError: (_) => _lost(), cancelOnError: true);
-      socket.add(Hello(deviceID: _deviceID, deviceName: deviceName, key: preferences.getString('key')).toJson());
+      socket.listen(
+        _received,
+        onDone: _lost,
+        onError: (_) => _lost(),
+        cancelOnError: true,
+      );
+      socket.add(
+        Hello(
+          deviceID: _deviceID,
+          deviceName: deviceName,
+          key: preferences.getString('key'),
+        ).toJson(),
+      );
     } on Object {
       _scheduleRetry();
     }
@@ -101,7 +116,12 @@ class Session extends ChangeNotifier {
 
   Future<void> _startPad() async {
     if (_udp == null) {
-      final udp = await RawDatagramSocket.bind(_host!.type == InternetAddressType.IPv6 ? InternetAddress.anyIPv6 : InternetAddress.anyIPv4, 0);
+      final udp = await RawDatagramSocket.bind(
+        _host!.type == InternetAddressType.IPv6
+            ? InternetAddress.anyIPv6
+            : InternetAddress.anyIPv4,
+        0,
+      );
       _udp = udp;
       udp.listen((event) {
         if (event != RawSocketEvent.read) return;
@@ -130,9 +150,23 @@ class Session extends ChangeNotifier {
   void _send() {
     final udp = _udp;
     final session = _session;
-    if (udp == null || session == null || _udpPort == null || status != ConnectionStatus.connected && _sender == null) return;
+    if (udp == null ||
+        session == null ||
+        _udpPort == null ||
+        status != ConnectionStatus.connected && _sender == null) {
+      return;
+    }
     _sequence = (_sequence + 1) & 0xFFFFFFFF;
-    udp.send(encodeInput(sequence: _sequence, sentMicros: _clock.elapsedMicroseconds, session: session, state: _state), _host!, _udpPort!);
+    udp.send(
+      encodeInput(
+        sequence: _sequence,
+        sentMicros: _clock.elapsedMicroseconds,
+        session: session,
+        state: _state,
+      ),
+      _host!,
+      _udpPort!,
+    );
   }
 
   /// One-way latency from an answer: half the round trip without the time the input waited in
@@ -141,7 +175,10 @@ class Session extends ChangeNotifier {
     output = answer;
     final roundTrip = _clock.elapsedMicroseconds - answer.sentMicros;
     if (roundTrip < 0 || roundTrip > 2000000) return;
-    final oneWay = (roundTrip - answer.waitMicros) / 2 + answer.waitMicros + _handlingMicros;
+    final oneWay =
+        (roundTrip - answer.waitMicros) / 2 +
+        answer.waitMicros +
+        _handlingMicros;
     final sample = oneWay / 1000;
     latencyMs = latencyMs == null ? sample : latencyMs! * 0.8 + sample * 0.2;
     notifyListeners();

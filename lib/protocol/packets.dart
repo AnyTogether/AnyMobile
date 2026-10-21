@@ -57,7 +57,12 @@ const inputSize = 80;
 const outputSize = 32;
 
 /// The 80-byte input packet of the engine's RemotePad wire format.
-Uint8List encodeInput({required int sequence, required int sentMicros, required BigInt session, required PadState state}) {
+Uint8List encodeInput({
+  required int sequence,
+  required int sentMicros,
+  required BigInt session,
+  required PadState state,
+}) {
   final bytes = Uint8List(inputSize);
   final data = ByteData.sublistView(bytes);
   data.setUint32(0, inputMagic, Endian.little);
@@ -65,7 +70,11 @@ Uint8List encodeInput({required int sequence, required int sentMicros, required 
   data.setUint16(6, inputSize, Endian.little);
   data.setUint32(8, sequence & 0xFFFFFFFF, Endian.little);
   data.setUint64(16, sentMicros, Endian.little);
-  data.setUint64(24, session.toUnsigned(64).toSigned(64).toInt(), Endian.little);
+  data.setUint64(
+    24,
+    session.toUnsigned(64).toSigned(64).toInt(),
+    Endian.little,
+  );
   data.setUint32(32, state.buttons, Endian.little);
   for (var axis = 0; axis < 4; axis++) {
     bytes[36 + axis] = state.sticks[axis].clamp(0, 255);
@@ -119,7 +128,9 @@ class Output {
 Output? decodeOutput(Uint8List bytes) {
   if (bytes.length != outputSize) return null;
   final data = ByteData.sublistView(bytes);
-  if (data.getUint32(0, Endian.little) != outputMagic || data.getUint16(4, Endian.little) != protocolVersion || data.getUint16(6, Endian.little) != outputSize) {
+  if (data.getUint32(0, Endian.little) != outputMagic ||
+      data.getUint16(4, Endian.little) != protocolVersion ||
+      data.getUint16(6, Endian.little) != outputSize) {
     return null;
   }
   return Output(

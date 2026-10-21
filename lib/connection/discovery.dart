@@ -16,9 +16,15 @@ Stream<(InternetAddress, int, String)> discover() async* {
       case BonsoirDiscoveryServiceFoundEvent():
         event.service.resolve(discovery.serviceResolver);
       case BonsoirDiscoveryServiceResolvedEvent():
-        final addresses = event.service.hostAddresses.map(InternetAddress.tryParse).whereType<InternetAddress>().toList();
+        final addresses = event.service.hostAddresses
+            .map(InternetAddress.tryParse)
+            .whereType<InternetAddress>()
+            .toList();
         if (addresses.isEmpty) return;
-        final address = addresses.firstWhere((address) => address.type == InternetAddressType.IPv4, orElse: () => addresses.first);
+        final address = addresses.firstWhere(
+          (address) => address.type == InternetAddressType.IPv4,
+          orElse: () => addresses.first,
+        );
         found.add((address, event.service.port, event.service.name));
       default:
         break;

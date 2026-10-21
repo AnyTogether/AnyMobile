@@ -31,7 +31,11 @@ class FakeLauncher {
       if (datagram == null) return;
       packets.add((DateTime.now(), datagram.data));
       if (echo) {
-        Timer(const Duration(milliseconds: 4), () => udp.send(answer(datagram.data), datagram.address, datagram.port));
+        Timer(
+          const Duration(milliseconds: 4),
+          () =>
+              udp.send(answer(datagram.data), datagram.address, datagram.port),
+        );
       }
     });
     http.transform(WebSocketTransformer()).listen((socket) {
@@ -44,7 +48,15 @@ class FakeLauncher {
           socket.add('{"type":"pairing","code":"4821"}');
           await Future<void>.delayed(const Duration(milliseconds: 100));
         }
-        socket.add(jsonEncode({'type': 'welcome', 'session': '42', 'udpPort': udp.port, 'macName': 'Test Mac', 'key': 'c3RvcmVkLWtleQ=='}));
+        socket.add(
+          jsonEncode({
+            'type': 'welcome',
+            'session': '42',
+            'udpPort': udp.port,
+            'macName': 'Test Mac',
+            'key': 'c3RvcmVkLWtleQ==',
+          }),
+        );
       });
     });
   }
@@ -55,9 +67,17 @@ class FakeLauncher {
     data.setUint32(0, 0x4F525041, Endian.little);
     data.setUint16(4, 1, Endian.little);
     data.setUint16(6, 32, Endian.little);
-    data.setUint32(8, ByteData.sublistView(input).getUint32(8, Endian.little), Endian.little);
+    data.setUint32(
+      8,
+      ByteData.sublistView(input).getUint32(8, Endian.little),
+      Endian.little,
+    );
     data.setUint32(12, 1000, Endian.little);
-    data.setUint64(16, ByteData.sublistView(input).getUint64(16, Endian.little), Endian.little);
+    data.setUint64(
+      16,
+      ByteData.sublistView(input).getUint64(16, Endian.little),
+      Endian.little,
+    );
     return out;
   }
 
@@ -70,10 +90,15 @@ class FakeLauncher {
   }
 }
 
-Future<void> waitFor(bool Function() condition, {Duration timeout = const Duration(seconds: 3)}) async {
+Future<void> waitFor(
+  bool Function() condition, {
+  Duration timeout = const Duration(seconds: 3),
+}) async {
   final deadline = DateTime.now().add(timeout);
   while (!condition()) {
-    if (DateTime.now().isAfter(deadline)) throw TimeoutException('condition not met');
+    if (DateTime.now().isAfter(deadline)) {
+      throw TimeoutException('condition not met');
+    }
     await Future<void>.delayed(const Duration(milliseconds: 5));
   }
 }
@@ -118,11 +143,20 @@ void main() {
     launcher.packets.clear();
     await Future<void>.delayed(const Duration(milliseconds: 100));
     expect(launcher.packets.length, greaterThanOrEqualTo(10));
-    final sequences = launcher.packets.map((packet) => ByteData.sublistView(packet.$2).getUint32(8, Endian.little)).toList();
+    final sequences = launcher.packets
+        .map(
+          (packet) =>
+              ByteData.sublistView(packet.$2).getUint32(8, Endian.little),
+        )
+        .toList();
     for (var index = 1; index < sequences.length; index++) {
       expect(sequences[index], greaterThan(sequences[index - 1]));
     }
-    expect(ByteData.sublistView(launcher.packets.first.$2).getUint64(24, Endian.little), 42);
+    expect(
+      ByteData.sublistView(launcher.packets.first.$2)
+          .getUint64(24, Endian.little),
+      42,
+    );
     await session.close();
     await launcher.stop();
   });
@@ -136,8 +170,18 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 3));
     final before = DateTime.now();
     session.update(PadState()..buttons = PadButton.cross);
-    await waitFor(() => launcher.packets.any((packet) => ByteData.sublistView(packet.$2).getUint32(32, Endian.little) == PadButton.cross));
-    final first = launcher.packets.firstWhere((packet) => ByteData.sublistView(packet.$2).getUint32(32, Endian.little) == PadButton.cross);
+    await waitFor(
+      () => launcher.packets.any(
+        (packet) =>
+            ByteData.sublistView(packet.$2).getUint32(32, Endian.little) ==
+            PadButton.cross,
+      ),
+    );
+    final first = launcher.packets.firstWhere(
+      (packet) =>
+          ByteData.sublistView(packet.$2).getUint32(32, Endian.little) ==
+          PadButton.cross,
+    );
     expect(first.$1.difference(before).inMilliseconds, lessThan(5));
     await session.close();
     await launcher.stop();
@@ -169,7 +213,10 @@ void main() {
     await again.start(port: port);
     final seen = <ConnectionStatus>[];
     session.addListener(() => seen.add(session.status));
-    await waitFor(() => session.status == ConnectionStatus.connected, timeout: const Duration(seconds: 4));
+    await waitFor(
+      () => session.status == ConnectionStatus.connected,
+      timeout: const Duration(seconds: 4),
+    );
     expect(seen, isNot(contains(ConnectionStatus.pairing)));
     expect(again.hellos.single['key'], 'c3RvcmVkLWtleQ==');
     await session.close();
