@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:anyps5_remote/connection/session.dart';
+import 'package:anyps5_remote/protocol/messages.dart';
 import 'package:anyps5_remote/protocol/packets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -22,6 +23,12 @@ class FakeLauncher {
   final hellos = <Map<String, dynamic>>[];
   final packets = <(DateTime, Uint8List)>[];
   final sockets = <WebSocket>[];
+
+  /// Everything but hellos the phone sent, in order.
+  final received = <Map<String, dynamic>>[];
+
+  /// Sent to every phone right after its welcome.
+  Map<String, dynamic>? library;
 
   int get port => http.port;
 
@@ -45,7 +52,20 @@ class FakeLauncher {
       sockets.add(socket);
       socket.listen((text) async {
         final message = jsonDecode(text as String) as Map<String, dynamic>;
-        if (message['type'] != 'hello') return;
+        if (message['type'] == 'wantArt') {
+          socket.add(
+            jsonEncode({
+              'type': 'art',
+              'id': message['id'],
+              'icon': base64Encode([1, 2, 3]),
+              'background': null,
+            }),
+          );
+        }
+        if (message['type'] != 'hello') {
+          received.add(message);
+          return;
+        }
         hellos.add(message);
         if (refuseFirst != null) {
           socket.add(jsonEncode({'type': 'rejected', 'reason': refuseFirst}));
@@ -66,6 +86,7 @@ class FakeLauncher {
             'key': 'c3RvcmVkLWtleQ==',
           }),
         );
+        if (library != null) socket.add(jsonEncode(library));
       });
     });
   }
@@ -88,6 +109,12 @@ class FakeLauncher {
       Endian.little,
     );
     return out;
+  }
+
+  void tell(Map<String, dynamic> message) {
+    for (final socket in sockets) {
+      socket.add(jsonEncode(message));
+    }
   }
 
   Future<void> stop() async {
@@ -338,5 +365,79 @@ void main() {
     expect(again.hellos.single['key'], 'c3RvcmVkLWtleQ==');
     await session.close();
     await again.stop();
+  });
+
+  Map<String, dynamic> library(String art, {String? running}) => {
+    'type': 'library',
+    'games': [
+      {
+        'id': '/Games/DOOM',
+        'name': 'DOOM',
+        'state': 'installed',
+        'trophies': '1/20',
+        'art': art,
+      },
+    ],
+    'selected': '/Games/DOOM',
+    'running': running,
+    'language': 'tr',
+  };
+
+  test('keeps the library and asks only for pictures it lacks', () async {
+    final launcher = FakeLauncher()..library = library('a');
+    await launcher.start();
+    final session = Session(preferences: preferences, deviceName: 'Pixel 8');
+    await session.connect(InternetAddress.loopbackIPv4, launcher.port);
+    await waitFor(() => session.art['/Games/DOOM']?.icon != null);
+    expect(session.library!.games.single.name, 'DOOM');
+    expect(session.library!.language, 'tr');
+    expect(session.art['/Games/DOOM']!.icon, [1, 2, 3]);
+    expect(session.art['/Games/DOOM']!.background, isNull);
+    expect(launcher.received.where((m) => m['type'] == 'wantArt').length, 1);
+    launcher.tell(library('a', running: '/Games/DOOM'));
+    await waitFor(() => session.library!.running == '/Games/DOOM');
+    launcher.tell(library('b'));
+    await waitFor(
+      () => launcher.received.where((m) => m['type'] == 'wantArt').length == 2,
+    );
+    await session.close();
+    await launcher.stop();
+  });
+
+  test('a paused pad lets go once and then stays quiet', () async {
+    final launcher = FakeLauncher();
+    await launcher.start();
+    final session = Session(preferences: preferences, deviceName: 'Pixel 8');
+    await session.connect(InternetAddress.loopbackIPv4, launcher.port);
+    await waitFor(() => session.status == ConnectionStatus.connected);
+    session.update(PadState()..buttons = PadButton.cross);
+    await waitFor(
+      () => launcher.packets.any((p) => buttonsOf(p.$2) == PadButton.cross),
+    );
+    session.pausePad();
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+    final count = launcher.packets.length;
+    expect(buttonsOf(launcher.packets.last.$2), 0);
+    await Future<void>.delayed(const Duration(milliseconds: 60));
+    expect(launcher.packets.length, count);
+    session.resumePad();
+    await waitFor(() => launcher.packets.length > count + 3);
+    await session.close();
+    await launcher.stop();
+  });
+
+  test('sends what the launcher mode asks for', () async {
+    final launcher = FakeLauncher();
+    await launcher.start();
+    final session = Session(preferences: preferences, deviceName: 'Pixel 8');
+    await session.connect(InternetAddress.loopbackIPv4, launcher.port);
+    await waitFor(() => session.status == ConnectionStatus.connected);
+    session.send(const Launch('/Games/DOOM'));
+    session.send(const Command('left'));
+    await waitFor(() => launcher.received.length == 2);
+    expect(launcher.received[0], {'type': 'launch', 'id': '/Games/DOOM'});
+    expect(launcher.received[1], {'type': 'command', 'name': 'left'});
+    await session.close();
+    await launcher.stop();
   });
 }

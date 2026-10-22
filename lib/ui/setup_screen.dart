@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../connection/session.dart';
+import '../strings.dart';
 
 /// Getting connected, step by step: finding the Mac, the Mac allowing the phone, ready. Every
 /// step moves on by itself; when nothing is found, tips and an address field show.
@@ -41,6 +42,7 @@ class _SetupScreenState extends State<SetupScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final texts = Texts.of(context);
     final session = widget.session;
     final status = session.status;
     final found =
@@ -77,34 +79,34 @@ class _SetupScreenState extends State<SetupScreen> {
                   _StepRow(
                     state: findStep,
                     title: found
-                        ? '${macName ?? 'Mac'} bulundu'
-                        : "Mac'teki AnyPS5 aranıyor",
-                    detail: found ? null : "Mac'te AnyPS5 açık olsun, telefon ile Mac aynı Wi-Fi'da olsun.",
+                        ? texts.found(macName ?? 'Mac')
+                        : texts.searching,
+                    detail: found ? null : texts.searchingDetail,
                   ),
-                  if (!found && widget.showManual) _manual(),
+                  if (!found && widget.showManual) _manual(texts),
                   _StepRow(
                     state: allowStep,
                     title: refused
                         ? (session.rejectedReason == 'busy'
-                              ? 'Başka bir telefon bağlı'
-                              : 'Mac bağlantıyı reddetti')
-                        : "Mac'te izin ver",
+                              ? texts.busy
+                              : texts.refused)
+                        : texts.allowOnMac,
                     detail: status == ConnectionStatus.pairing
-                        ? "Mac'te aynı kod görünüyor: İzin Ver'e bas."
+                        ? texts.sameCode
                         : null,
                     child:
                         status == ConnectionStatus.pairing &&
                             session.code != null
                         ? _code(session.code!)
                         : refused
-                        ? _retry()
+                        ? _retry(texts)
                         : null,
                   ),
                   _StepRow(
                     state: readyStep,
-                    title: 'Hazır',
+                    title: texts.ready,
                     detail: status == ConnectionStatus.connected
-                        ? 'Kol açılıyor…'
+                        ? texts.opening
                         : null,
                     last: true,
                   ),
@@ -146,7 +148,7 @@ class _SetupScreenState extends State<SetupScreen> {
     ),
   );
 
-  Widget _retry() => Padding(
+  Widget _retry(Strings texts) => Padding(
     padding: const EdgeInsets.only(top: 12),
     child: OutlinedButton(
       onPressed: widget.onRetry,
@@ -155,19 +157,22 @@ class _SetupScreenState extends State<SetupScreen> {
         side: const BorderSide(color: Color(0x55FFFFFF)),
         padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 12),
       ),
-      child: const Text('Tekrar dene'),
+      child: Text(texts.retry),
     ),
   );
 
-  Widget _manual() => Padding(
+  Widget _manual(Strings texts) => Padding(
     padding: const EdgeInsets.only(left: 44, bottom: 18),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          "Bulunamadı mı? Mac'te telefon destekli AnyPS5 açık mı, iki cihaz aynı Wi-Fi'da mı bak. Ya da Mac'in adresini yaz "
-          '(Sistem Ayarları → Wi-Fi → Ayrıntılar → IP adresi).',
-          style: TextStyle(color: Colors.white54, fontSize: 13, height: 1.35),
+        Text(
+          texts.notFound,
+          style: const TextStyle(
+            color: Colors.white54,
+            fontSize: 13,
+            height: 1.35,
+          ),
         ),
         const SizedBox(height: 10),
         SizedBox(

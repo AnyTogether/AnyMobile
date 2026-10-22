@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
@@ -9,6 +10,16 @@ import '../protocol/messages.dart';
 import '../protocol/packets.dart';
 
 enum ConnectionStatus { searching, connecting, pairing, connected, rejected }
+
+/// A game's pictures as the launcher sent them, for the [tag] they were sent for.
+class GameArt {
+  GameArt(this.tag);
+
+  final String tag;
+  Uint8List? icon;
+  Uint8List? background;
+  bool arrived = false;
+}
 
 /// The phone's link to the launcher: the WebSocket control channel (hello, pairing, welcome),
 /// the UDP pad sender and the latency measured from the game's answers.
@@ -35,6 +46,13 @@ class Session extends ChangeNotifier {
 
   /// The game's latest answer: vibration, light bar and trigger fallbacks.
   Output? output;
+
+  /// The launcher's games as it last told them, and their pictures by game.
+  Library? library;
+  final art = <String, GameArt>{};
+
+  /// Off while the phone shows the launcher: the game gets no pad from it then.
+  bool _padActive = true;
 
   InternetAddress? _host;
   int? _port;
@@ -137,6 +155,22 @@ class Session extends ChangeNotifier {
         code = null;
         _startPad(generation);
         _setStatus(ConnectionStatus.connected);
+      case final Library library:
+        this.library = library;
+        for (final game in library.games) {
+          if (art[game.id]?.tag == game.art) continue;
+          art[game.id] = GameArt(game.art);
+          _socket?.add(WantArt(game.id).toJson());
+        }
+        notifyListeners();
+      case Art(:final id, :final icon, :final background):
+        final pictures = art[id];
+        if (pictures == null) break;
+        pictures
+          ..icon = icon == null ? null : base64Decode(icon)
+          ..background = background == null ? null : base64Decode(background)
+          ..arrived = true;
+        notifyListeners();
       case Rejected(:final reason):
         rejectedReason = reason;
         if (reason == 'busy') {
@@ -183,7 +217,25 @@ class Session extends ChangeNotifier {
     _handlingMicros = _clock.elapsedMicroseconds - touched;
   }
 
+  /// A request to the launcher on the control channel; dropped while not connected.
+  void send(Message message) => _socket?.add(message.toJson());
+
+  /// The game lets go of everything held, then hears nothing from the phone until [resumePad].
+  void pausePad() {
+    if (!_padActive) return;
+    _state = PadState();
+    _send();
+    _padActive = false;
+  }
+
+  void resumePad() {
+    if (_padActive) return;
+    _padActive = true;
+    _send();
+  }
+
   void _send() {
+    if (!_padActive) return;
     final udp = _udp;
     final session = _session;
     if (udp == null || session == null || _udpPort == null || _sender == null) {

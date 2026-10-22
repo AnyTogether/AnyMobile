@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../strings.dart';
+
 /// The first start: what the app is, and the one button that begins the setup.
 class WelcomeScreen extends StatelessWidget {
   const WelcomeScreen({super.key, required this.onStart});
@@ -8,6 +10,7 @@ class WelcomeScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final texts = Texts.of(context);
     return Scaffold(
       backgroundColor: const Color(0xFF07080B),
       body: SafeArea(
@@ -23,29 +26,29 @@ class WelcomeScreen extends StatelessWidget {
                   size: 52,
                 ),
                 const SizedBox(height: 18),
-                const Text(
-                  'Telefonun DualSense olsun',
-                  style: TextStyle(
+                Text(
+                  texts.welcomeTitle,
+                  style: const TextStyle(
                     color: Colors.white,
                     fontSize: 28,
                     fontWeight: FontWeight.w300,
                   ),
                 ),
                 const SizedBox(height: 10),
-                const Text(
-                  "Mac'te AnyPS5 ile açtığın oyunları bu telefonla oyna.",
-                  style: TextStyle(color: Colors.white60, fontSize: 15),
+                Text(
+                  texts.welcomeText,
+                  style: const TextStyle(color: Colors.white60, fontSize: 15),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 26),
-                const Wrap(
+                Wrap(
                   spacing: 28,
                   runSpacing: 12,
                   alignment: WrapAlignment.center,
                   children: [
-                    _Step(number: 1, text: "Mac'te AnyPS5'i aç"),
-                    _Step(number: 2, text: "Aynı Wi-Fi'a bağlan"),
-                    _Step(number: 3, text: "Mac'te izin ver"),
+                    _Step(number: 1, text: texts.stepOpen),
+                    _Step(number: 2, text: texts.stepWifi),
+                    _Step(number: 3, text: texts.stepAllow),
                   ],
                 ),
                 const SizedBox(height: 30),
@@ -63,7 +66,7 @@ class WelcomeScreen extends StatelessWidget {
                       fontWeight: FontWeight.w600,
                     ),
                   ),
-                  child: const Text('Başla'),
+                  child: Text(texts.start),
                 ),
               ],
             ),
