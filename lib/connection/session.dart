@@ -21,6 +21,10 @@ class Session extends ChangeNotifier {
   static const sendInterval = Duration(milliseconds: 8);
   static const reportInterval = Duration(seconds: 2);
   static const retryInterval = Duration(seconds: 1);
+  static const pingInterval = Duration(seconds: 2);
+
+  /// The shortest time between two latency updates the listeners hear about.
+  static const latencyNotice = Duration(milliseconds: 500);
   static final _clock = Stopwatch()..start();
 
   ConnectionStatus status = ConnectionStatus.searching;
@@ -45,6 +49,10 @@ class Session extends ChangeNotifier {
   int _sequence = 0;
   PadState _state = PadState();
   int _handlingMicros = 0;
+  int _latencyNoticed = -1 << 62;
+
+  /// Bumped by every connect, retry and close: work started for an older one is dropped.
+  int _generation = 0;
 
   String get _deviceID {
     final stored = preferences.getString('deviceID');
@@ -58,26 +66,49 @@ class Session extends ChangeNotifier {
     return id;
   }
 
-  /// Connects to the launcher at [host]:[port] and keeps reconnecting until [close].
+  /// Connects to the launcher at [host]:[port], replacing any earlier target, and keeps
+  /// reconnecting until [close].
   Future<void> connect(InternetAddress host, int port) async {
     _host = host;
     _port = port;
     _closed = false;
-    await _open();
+    await _restart();
   }
 
-  Future<void> _open() async {
+  /// Tries again after the launcher refused, or at once while waiting to reconnect.
+  void retry() {
     if (_closed || _host == null) return;
+    rejectedReason = null;
+    _restart();
+  }
+
+  Future<void> _restart() async {
+    final generation = ++_generation;
+    _retry?.cancel();
+    final old = _socket;
+    _socket = null;
+    _stopPad();
+    await old?.close();
+    await _open(generation);
+  }
+
+  Future<void> _open(int generation) async {
+    if (_closed || _host == null || generation != _generation) return;
     _setStatus(ConnectionStatus.connecting);
     try {
       final socket = await WebSocket.connect(
         Uri(scheme: 'ws', host: _host!.address, port: _port).toString(),
       ).timeout(const Duration(seconds: 3));
+      if (generation != _generation || _closed) {
+        await socket.close();
+        return;
+      }
+      socket.pingInterval = pingInterval;
       _socket = socket;
       socket.listen(
-        _received,
-        onDone: _lost,
-        onError: (_) => _lost(),
+        (data) => _received(data, generation),
+        onDone: () => _lost(generation),
+        onError: (_) => _lost(generation),
         cancelOnError: true,
       );
       socket.add(
@@ -88,12 +119,12 @@ class Session extends ChangeNotifier {
         ).toJson(),
       );
     } on Object {
-      _scheduleRetry();
+      if (generation == _generation) _scheduleRetry(generation);
     }
   }
 
-  void _received(dynamic data) {
-    if (data is! String) return;
+  void _received(dynamic data, int generation) {
+    if (data is! String || generation != _generation) return;
     switch (Message.fromJson(data)) {
       case Pairing(:final code):
         this.code = code;
@@ -104,17 +135,21 @@ class Session extends ChangeNotifier {
         _session = session;
         _udpPort = udpPort;
         code = null;
-        _startPad();
+        _startPad(generation);
         _setStatus(ConnectionStatus.connected);
       case Rejected(:final reason):
         rejectedReason = reason;
-        _setStatus(ConnectionStatus.rejected);
+        if (reason == 'busy') {
+          _scheduleRetry(generation);
+        } else {
+          _setStatus(ConnectionStatus.rejected);
+        }
       default:
         break;
     }
   }
 
-  Future<void> _startPad() async {
+  Future<void> _startPad(int generation) async {
     if (_udp == null) {
       final udp = await RawDatagramSocket.bind(
         _host!.type == InternetAddressType.IPv6
@@ -130,6 +165,7 @@ class Session extends ChangeNotifier {
         if (answer != null) _answered(answer);
       });
     }
+    if (generation != _generation) return;
     _sender?.cancel();
     _sender = Timer.periodic(sendInterval, (_) => _send());
     _reporter?.cancel();
@@ -150,30 +186,32 @@ class Session extends ChangeNotifier {
   void _send() {
     final udp = _udp;
     final session = _session;
-    if (udp == null ||
-        session == null ||
-        _udpPort == null ||
-        status != ConnectionStatus.connected && _sender == null) {
+    if (udp == null || session == null || _udpPort == null || _sender == null) {
       return;
     }
     _sequence = (_sequence + 1) & 0xFFFFFFFF;
-    udp.send(
-      encodeInput(
-        sequence: _sequence,
-        sentMicros: _clock.elapsedMicroseconds,
-        session: session,
-        state: _state,
-      ),
-      _host!,
-      _udpPort!,
-    );
+    try {
+      udp.send(
+        encodeInput(
+          sequence: _sequence,
+          sentMicros: _clock.elapsedMicroseconds,
+          session: session,
+          state: _state,
+        ),
+        _host!,
+        _udpPort!,
+      );
+    } on SocketException {
+      // No route while the Wi-Fi is gone: the next tick tries again.
+    }
   }
 
   /// One-way latency from an answer: half the round trip without the time the input waited in
   /// the game's socket, plus that wait, plus the time from the touch to the send.
   void _answered(Output answer) {
     output = answer;
-    final roundTrip = _clock.elapsedMicroseconds - answer.sentMicros;
+    final now = _clock.elapsedMicroseconds;
+    final roundTrip = now - answer.sentMicros;
     if (roundTrip < 0 || roundTrip > 2000000) return;
     final oneWay =
         (roundTrip - answer.waitMicros) / 2 +
@@ -181,32 +219,40 @@ class Session extends ChangeNotifier {
         _handlingMicros;
     final sample = oneWay / 1000;
     latencyMs = latencyMs == null ? sample : latencyMs! * 0.8 + sample * 0.2;
-    notifyListeners();
+    if (now - _latencyNoticed >= latencyNotice.inMicroseconds) {
+      _latencyNoticed = now;
+      notifyListeners();
+    }
   }
 
-  void _lost() {
+  void _lost(int generation) {
+    if (generation != _generation) return;
     _socket = null;
     _stopPad();
     if (_closed || status == ConnectionStatus.rejected) return;
-    _scheduleRetry();
+    _scheduleRetry(generation);
   }
 
-  void _scheduleRetry() {
+  void _scheduleRetry(int generation) {
     _setStatus(ConnectionStatus.connecting);
     _retry?.cancel();
-    _retry = Timer(retryInterval, _open);
+    _retry = Timer(retryInterval, () => _open(generation));
   }
 
+  /// A session that ends lets go of everything: a pad held when it dropped is not sent again
+  /// when it comes back.
   void _stopPad() {
     _sender?.cancel();
     _sender = null;
     _reporter?.cancel();
     _reporter = null;
     _session = null;
+    _state = PadState();
     latencyMs = null;
   }
 
   void _setStatus(ConnectionStatus next) {
+    if (status == next) return;
     status = next;
     notifyListeners();
   }
@@ -214,11 +260,13 @@ class Session extends ChangeNotifier {
   /// Ends the session for good.
   Future<void> close() async {
     _closed = true;
+    _generation++;
     _retry?.cancel();
     _stopPad();
     _udp?.close();
     _udp = null;
-    await _socket?.close();
+    final socket = _socket;
     _socket = null;
+    await socket?.close();
   }
 }

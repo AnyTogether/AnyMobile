@@ -89,6 +89,14 @@ void main() {
     expect(states.last.touch[0].active, isFalse);
   });
 
+  testWidgets('leaving the pad releases it', (tester) async {
+    final states = await show(tester);
+    await tester.startGesture(at('cross'));
+    expect(states.last.buttons, PadButton.cross);
+    await tester.pumpWidget(const SizedBox());
+    expect(states.last.buttons, 0);
+  });
+
   testWidgets('a finger off every control does nothing', (tester) async {
     final states = await show(tester);
     final finger = await tester.startGesture(const Offset(400, 390));

@@ -42,7 +42,7 @@ class _RemoteAppState extends State<RemoteApp> {
   StreamSubscription<(InternetAddress, int, String)>? _discovery;
   Timer? _manualTimer;
   bool _manual = false;
-  bool _connecting = false;
+  bool _wasConnected = false;
 
   @override
   void initState() {
@@ -58,15 +58,20 @@ class _RemoteAppState extends State<RemoteApp> {
     );
   }
 
+  /// A launcher found or typed in becomes the target unless one is already connected, so a
+  /// launcher that comes back on another port or address is followed.
   void _connect(InternetAddress address, int port) {
-    if (_connecting) return;
-    _connecting = true;
+    if (_session.status == ConnectionStatus.connected) return;
     _manualTimer?.cancel();
     _session.connect(address, port);
   }
 
   void _changed() {
-    WakelockPlus.toggle(enable: _session.status == ConnectionStatus.connected);
+    final connected = _session.status == ConnectionStatus.connected;
+    if (connected != _wasConnected) {
+      _wasConnected = connected;
+      WakelockPlus.toggle(enable: connected);
+    }
     setState(() {});
   }
 
@@ -111,10 +116,8 @@ class _RemoteAppState extends State<RemoteApp> {
           : ConnectScreen(
               session: _session,
               showManual: _manual,
-              onAddress: (address) {
-                _connecting = false;
-                _connect(address, launcherPort);
-              },
+              onAddress: (address) => _connect(address, launcherPort),
+              onRetry: _session.retry,
             ),
     );
   }

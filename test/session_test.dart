@@ -10,10 +10,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 /// The launcher's side, scripted: a WebSocket control channel and a UDP pad port.
 class FakeLauncher {
-  FakeLauncher({this.askFirst = false, this.echo = false});
+  FakeLauncher({this.askFirst = false, this.echo = false, this.refuseFirst});
 
   final bool askFirst;
   final bool echo;
+
+  /// The reason the first hello is refused with, before later ones are welcomed.
+  String? refuseFirst;
   late HttpServer http;
   late RawDatagramSocket udp;
   final hellos = <Map<String, dynamic>>[];
@@ -44,6 +47,12 @@ class FakeLauncher {
         final message = jsonDecode(text as String) as Map<String, dynamic>;
         if (message['type'] != 'hello') return;
         hellos.add(message);
+        if (refuseFirst != null) {
+          socket.add(jsonEncode({'type': 'rejected', 'reason': refuseFirst}));
+          refuseFirst = null;
+          await socket.close();
+          return;
+        }
         if (askFirst && message['key'] == null) {
           socket.add('{"type":"pairing","code":"4821"}');
           await Future<void>.delayed(const Duration(milliseconds: 100));
@@ -102,6 +111,9 @@ Future<void> waitFor(
     await Future<void>.delayed(const Duration(milliseconds: 5));
   }
 }
+
+int buttonsOf(Uint8List packet) =>
+    ByteData.sublistView(packet).getUint32(32, Endian.little);
 
 void main() {
   late SharedPreferences preferences;
@@ -196,6 +208,111 @@ void main() {
     await waitFor(() => session.latencyMs != null);
     await Future<void>.delayed(const Duration(milliseconds: 200));
     expect(session.latencyMs, inInclusiveRange(1, 15));
+    await session.close();
+    await launcher.stop();
+  });
+
+  test('sends a released pad after the session comes back', () async {
+    final launcher = FakeLauncher();
+    await launcher.start();
+    final session = Session(preferences: preferences, deviceName: 'Pixel 8');
+    await session.connect(InternetAddress.loopbackIPv4, launcher.port);
+    await waitFor(() => session.status == ConnectionStatus.connected);
+    session.update(PadState()..buttons = PadButton.r2);
+    final port = launcher.port;
+    await launcher.stop();
+    await waitFor(() => session.status != ConnectionStatus.connected);
+    final again = FakeLauncher();
+    await again.start(port: port);
+    await waitFor(
+      () => session.status == ConnectionStatus.connected,
+      timeout: const Duration(seconds: 4),
+    );
+    await waitFor(() => again.packets.isNotEmpty);
+    expect(
+      again.packets.map((packet) => buttonsOf(packet.$2)),
+      everyElement(0),
+    );
+    await session.close();
+    await again.stop();
+  });
+
+  test('a busy launcher is tried again', () async {
+    final launcher = FakeLauncher(refuseFirst: 'busy');
+    await launcher.start();
+    final session = Session(preferences: preferences, deviceName: 'Pixel 8');
+    await session.connect(InternetAddress.loopbackIPv4, launcher.port);
+    await waitFor(
+      () => session.status == ConnectionStatus.connected,
+      timeout: const Duration(seconds: 4),
+    );
+    expect(launcher.hellos.length, 2);
+    await session.close();
+    await launcher.stop();
+  });
+
+  test('a refusal can be tried again', () async {
+    final launcher = FakeLauncher(refuseFirst: 'denied');
+    await launcher.start();
+    final session = Session(preferences: preferences, deviceName: 'Pixel 8');
+    await session.connect(InternetAddress.loopbackIPv4, launcher.port);
+    await waitFor(() => session.status == ConnectionStatus.rejected);
+    session.retry();
+    await waitFor(
+      () => session.status == ConnectionStatus.connected,
+      timeout: const Duration(seconds: 4),
+    );
+    await session.close();
+    await launcher.stop();
+  });
+
+  test('a second connect replaces the first', () async {
+    final unused = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    final dead = unused.port;
+    await unused.close();
+    final launcher = FakeLauncher();
+    await launcher.start();
+    final session = Session(preferences: preferences, deviceName: 'Pixel 8');
+    final seen = <ConnectionStatus>[];
+    session.addListener(() => seen.add(session.status));
+    unawaited(session.connect(InternetAddress.loopbackIPv4, dead));
+    await session.connect(InternetAddress.loopbackIPv4, launcher.port);
+    await waitFor(() => session.status == ConnectionStatus.connected);
+    await Future<void>.delayed(const Duration(milliseconds: 1500));
+    expect(session.status, ConnectionStatus.connected);
+    expect(seen, isNot(contains(ConnectionStatus.rejected)));
+    expect(launcher.hellos.length, 1);
+    await session.close();
+    await launcher.stop();
+  });
+
+  test('follows the launcher to a new port', () async {
+    final first = FakeLauncher();
+    await first.start();
+    final session = Session(preferences: preferences, deviceName: 'Pixel 8');
+    await session.connect(InternetAddress.loopbackIPv4, first.port);
+    await waitFor(() => session.status == ConnectionStatus.connected);
+    await first.stop();
+    await waitFor(() => session.status != ConnectionStatus.connected);
+    final moved = FakeLauncher();
+    await moved.start();
+    await session.connect(InternetAddress.loopbackIPv4, moved.port);
+    await waitFor(() => session.status == ConnectionStatus.connected);
+    await session.close();
+    await moved.stop();
+  });
+
+  test('tells its listeners a few times a second at most', () async {
+    final launcher = FakeLauncher(echo: true);
+    await launcher.start();
+    final session = Session(preferences: preferences, deviceName: 'Pixel 8');
+    await session.connect(InternetAddress.loopbackIPv4, launcher.port);
+    await waitFor(() => session.status == ConnectionStatus.connected);
+    await waitFor(() => session.latencyMs != null);
+    var told = 0;
+    session.addListener(() => told++);
+    await Future<void>.delayed(const Duration(milliseconds: 1000));
+    expect(told, lessThanOrEqualTo(5));
     await session.close();
     await launcher.stop();
   });

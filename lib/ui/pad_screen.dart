@@ -39,6 +39,13 @@ class _PadScreenState extends State<PadScreen> {
   final _clock = Stopwatch()..start();
   PadState _state = PadState();
 
+  /// A pad that goes away (the connection dropped) lets go of what was held on it.
+  @override
+  void dispose() {
+    if (_fingers.isNotEmpty) widget.onState(PadState());
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Material(
@@ -268,5 +275,8 @@ class _PadPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_PadPainter old) => true;
+  bool shouldRepaint(_PadPainter old) =>
+      !identical(old.state, state) ||
+      old.fingers.length != fingers.length ||
+      old.layout != layout;
 }

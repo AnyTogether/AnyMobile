@@ -12,11 +12,13 @@ class ConnectScreen extends StatefulWidget {
     required this.session,
     required this.onAddress,
     required this.showManual,
+    required this.onRetry,
   });
 
   final Session session;
   final void Function(InternetAddress address) onAddress;
   final bool showManual;
+  final VoidCallback onRetry;
 
   @override
   State<ConnectScreen> createState() => _ConnectScreenState();
@@ -101,7 +103,23 @@ class _ConnectScreenState extends State<ConnectScreen> {
                   style: TextStyle(color: Colors.white60, fontSize: 14),
                 ),
               ],
-              if (widget.showManual &&
+              if (session.status == ConnectionStatus.rejected) ...[
+                const SizedBox(height: 24),
+                OutlinedButton(
+                  onPressed: widget.onRetry,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    side: const BorderSide(color: Color(0x55FFFFFF)),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 28,
+                      vertical: 14,
+                    ),
+                  ),
+                  child: const Text('Tekrar dene'),
+                ),
+              ],
+              if ((widget.showManual ||
+                      session.status == ConnectionStatus.rejected) &&
                   session.status != ConnectionStatus.pairing) ...[
                 const SizedBox(height: 28),
                 SizedBox(

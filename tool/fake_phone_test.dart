@@ -4,6 +4,9 @@
 //
 // It pairs (the launcher must allow it), presses ✕ for 200 ms every second for five seconds
 // and prints the latency it measures. Without ANYPS5_E2E_PORT it does nothing.
+//
+// It runs under flutter test, whose mock preferences it uses on purpose.
+// ignore_for_file: invalid_use_of_visible_for_testing_member
 import 'dart:io';
 
 import 'package:anyps5_remote/connection/session.dart';
