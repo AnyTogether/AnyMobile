@@ -8,12 +8,19 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 
 import 'connection/discovery.dart';
 import 'connection/session.dart';
+import 'protocol/messages.dart';
+import 'strings.dart';
+import 'ui/home_screen.dart';
 import 'ui/pad_screen.dart';
 import 'ui/setup_screen.dart';
 import 'ui/welcome_screen.dart';
 
 /// The control port the launcher listens on when it can; a typed address uses it.
 const launcherPort = 47700;
+
+/// A launcher to use instead of searching (host:port), given at build time for checks that must
+/// not reach another launcher on the network.
+const fixedLauncher = String.fromEnvironment('ANYPS5_LAUNCHER');
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -46,7 +53,7 @@ class StartupError extends StatelessWidget {
         padding: const EdgeInsets.all(32),
         child: Center(
           child: Text(
-            'AnyPS5 Remote açılamadı:\n\n$error',
+            '${Strings.english.startFailed}\n\n$error',
             style: const TextStyle(color: Colors.white70, fontSize: 14),
           ),
         ),
@@ -76,7 +83,13 @@ class _RemoteAppState extends State<RemoteApp> {
   Timer? _readyTimer;
   bool _manual = false;
   bool _wasConnected = false;
+
+  /// Past the "Ready" moment: the launcher or the pad shows.
+  bool _ready = false;
+
+  /// The pad shows while a game plays, unless PS took the phone to the launcher.
   bool _padShown = false;
+  String? _running;
   String? _foundMac;
   late bool _welcomed = widget.preferences.getBool('welcomed') ?? false;
 
@@ -89,6 +102,11 @@ class _RemoteAppState extends State<RemoteApp> {
 
   /// Looks for the launcher; the address field shows if nothing turns up within a few seconds.
   void _search() {
+    if (fixedLauncher.isNotEmpty) {
+      final parts = fixedLauncher.split(':');
+      _connect(InternetAddress(parts[0]), int.parse(parts[1]));
+      return;
+    }
     _discovery ??= discover().listen((found) {
       setState(() => _foundMac = found.$3);
       _connect(found.$1, found.$2);
@@ -114,13 +132,41 @@ class _RemoteAppState extends State<RemoteApp> {
       WakelockPlus.toggle(enable: connected);
       _readyTimer?.cancel();
       if (connected) {
-        // "Hazır" shows for a moment, then the pad takes over.
-        _readyTimer = Timer(readyPause, () => setState(() => _padShown = true));
+        // "Ready" shows for a moment, then the launcher or the game takes over.
+        _readyTimer = Timer(readyPause, () => setState(() => _ready = true));
       } else {
-        _padShown = false;
+        _ready = false;
+      }
+    }
+    final library = _session.library;
+    if (library != null) {
+      if (library.language != widget.preferences.getString('language')) {
+        widget.preferences.setString('language', library.language);
+      }
+      // A game that starts takes the pad; one that ends gives the phone back to the launcher.
+      if (library.running != _running) {
+        _running = library.running;
+        _show(pad: _running != null);
       }
     }
     setState(() {});
+  }
+
+  void _show({required bool pad}) {
+    _padShown = pad;
+    pad ? _session.resumePad() : _session.pausePad();
+  }
+
+  void _home() {
+    _session.send(const Home());
+    setState(() => _show(pad: false));
+  }
+
+  void _resume() {
+    final running = _session.library?.running;
+    if (running == null) return;
+    _session.send(Launch(running));
+    setState(() => _show(pad: true));
   }
 
   void _start() {
@@ -143,29 +189,14 @@ class _RemoteAppState extends State<RemoteApp> {
     final Widget home;
     if (!_welcomed) {
       home = WelcomeScreen(onStart: _start);
-    } else if (_padShown && _session.status == ConnectionStatus.connected) {
-      home = PadScreen(
-        onState: _session.update,
-        status: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const StatusDot(color: Color(0xFF4CD964)),
-            const SizedBox(width: 8),
-            Text(
-              [
-                _session.macName ?? 'Mac',
-                if (_session.latencyMs != null)
-                  '${_session.latencyMs!.round()} ms',
-              ].join(' · '),
-              style: const TextStyle(
-                color: Colors.white70,
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-        ),
-      );
+    } else if (_ready && _session.status == ConnectionStatus.connected) {
+      home = _padShown
+          ? PadScreen(
+              onState: _session.update,
+              onHome: _home,
+              status: _status(),
+            )
+          : HomeScreen(session: _session, onResume: _resume, status: _status());
     } else {
       home = SetupScreen(
         session: _session,
@@ -175,14 +206,38 @@ class _RemoteAppState extends State<RemoteApp> {
         onRetry: _session.retry,
       );
     }
-    return MaterialApp(
-      title: 'AnyPS5 Remote',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData.dark(useMaterial3: true),
-      home: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 280),
-        child: KeyedSubtree(key: ValueKey(home.runtimeType), child: home),
+    return Texts(
+      strings: Strings.of(
+        _session.library?.language ?? widget.preferences.getString('language'),
+      ),
+      child: MaterialApp(
+        title: 'AnyPS5 Remote',
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData.dark(useMaterial3: true),
+        home: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 280),
+          child: KeyedSubtree(key: ValueKey(home.runtimeType), child: home),
+        ),
       ),
     );
   }
+
+  Widget _status() => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      const StatusDot(color: Color(0xFF4CD964)),
+      const SizedBox(width: 8),
+      Text(
+        [
+          _session.macName ?? 'Mac',
+          if (_session.latencyMs != null) '${_session.latencyMs!.round()} ms',
+        ].join(' · '),
+        style: const TextStyle(
+          color: Colors.white70,
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    ],
+  );
 }

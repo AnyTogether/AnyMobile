@@ -26,6 +26,22 @@ void main() {
     expect(states.last.buttons & PadButton.cross, 0);
   });
 
+  testWidgets('PS goes home and is not sent to the game', (tester) async {
+    tester.view.physicalSize = size;
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final states = <PadState>[];
+    var home = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: PadScreen(onState: states.add, onHome: () => home++),
+      ),
+    );
+    await tester.tapAt(at('ps'));
+    expect(home, 1);
+    expect(states.every((state) => state.buttons == 0), isTrue);
+  });
+
   testWidgets('two buttons at once', (tester) async {
     final states = await show(tester);
     final first = await tester.startGesture(at('cross'));

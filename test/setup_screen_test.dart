@@ -24,8 +24,8 @@ void main() {
   testWidgets('the welcome screen starts the setup', (tester) async {
     var started = false;
     await show(tester, WelcomeScreen(onStart: () => started = true));
-    expect(find.text('Başla'), findsOneWidget);
-    await tester.tap(find.text('Başla'));
+    expect(find.text('Start'), findsOneWidget);
+    await tester.tap(find.text('Start'));
     expect(started, isTrue);
   });
 
@@ -41,8 +41,8 @@ void main() {
         onRetry: () {},
       ),
     );
-    expect(find.text("Mac'teki AnyPS5 aranıyor"), findsOneWidget);
-    expect(find.textContaining('aynı Wi-Fi'), findsWidgets);
+    expect(find.text('Looking for AnyPS5 on the Mac'), findsOneWidget);
+    expect(find.textContaining('same Wi-Fi'), findsWidgets);
 
     await show(
       tester,
@@ -54,7 +54,7 @@ void main() {
         onRetry: () {},
       ),
     );
-    expect(find.text('Utku MacBook bulundu'), findsOneWidget);
+    expect(find.text('Utku MacBook found'), findsOneWidget);
 
     link
       ..status = ConnectionStatus.pairing
@@ -72,7 +72,7 @@ void main() {
     for (final digit in ['4', '8', '2', '1']) {
       expect(find.text(digit), findsOneWidget);
     }
-    expect(find.textContaining('İzin Ver'), findsOneWidget);
+    expect(find.textContaining('press Allow'), findsOneWidget);
   });
 
   testWidgets('setup offers the address and tips when no Mac is found', (
@@ -90,7 +90,7 @@ void main() {
       ),
     );
     expect(find.byType(TextField), findsOneWidget);
-    expect(find.textContaining('telefon destekli'), findsOneWidget);
+    expect(find.textContaining('phone support'), findsOneWidget);
   });
 
   testWidgets('a refusal offers to try again', (tester) async {
@@ -109,7 +109,7 @@ void main() {
         onRetry: () => retried = true,
       ),
     );
-    await tester.tap(find.text('Tekrar dene'));
+    await tester.tap(find.text('Try Again'));
     expect(retried, isTrue);
   });
 }

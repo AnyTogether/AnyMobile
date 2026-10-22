@@ -88,6 +88,8 @@ class PadLayout {
       height: 0.14,
       bit: PadButton.touchPad,
     ),
+    // Not a pad button: it takes the phone back to the launcher.
+    PadControl('ps', ControlKind.button, 0.50, 0.86, size: 0.055, label: 'PS'),
     PadControl(
       'options',
       ControlKind.button,

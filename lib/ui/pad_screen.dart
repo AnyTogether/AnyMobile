@@ -11,9 +11,13 @@ class PadScreen extends StatefulWidget {
     required this.onState,
     this.layout = PadLayout.standard,
     this.status,
+    this.onHome,
   });
 
   final void Function(PadState state) onState;
+
+  /// The PS button: the launcher, on the phone and on the Mac.
+  final VoidCallback? onHome;
   final PadLayout layout;
 
   /// Drawn at the top: the connection dot and the latency.
@@ -88,6 +92,10 @@ class _PadScreenState extends State<PadScreen> {
   void _down(PointerDownEvent event, Size size) {
     final control = widget.layout.hit(event.localPosition, size);
     if (control == null) return;
+    if (control.id == 'ps') {
+      widget.onHome?.call();
+      return;
+    }
     final finger = _Finger(control, event.localPosition)
       ..position = event.localPosition;
     final released = _released[control.id];
