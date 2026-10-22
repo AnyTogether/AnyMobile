@@ -22,6 +22,9 @@ const launcherPort = 47700;
 /// not reach another launcher on the network.
 const fixedLauncher = String.fromEnvironment('ANYPS5_LAUNCHER');
 
+/// The version in pubspec.yaml, shown faintly in a corner so an old install is easy to spot.
+const appVersion = '1.1.0';
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   try {
@@ -214,6 +217,21 @@ class _RemoteAppState extends State<RemoteApp> {
         title: 'AnyPS5 Remote',
         debugShowCheckedModeBanner: false,
         theme: ThemeData.dark(useMaterial3: true),
+        builder: (context, child) => Stack(
+          children: [
+            ?child,
+            const Positioned(
+              right: 10,
+              bottom: 6,
+              child: IgnorePointer(
+                child: Text(
+                  'v$appVersion',
+                  style: TextStyle(color: Color(0x4DFFFFFF), fontSize: 10),
+                ),
+              ),
+            ),
+          ],
+        ),
         home: AnimatedSwitcher(
           duration: const Duration(milliseconds: 280),
           child: KeyedSubtree(key: ValueKey(home.runtimeType), child: home),
