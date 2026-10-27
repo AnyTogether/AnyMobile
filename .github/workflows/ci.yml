@@ -59,7 +59,8 @@ jobs:
           key: gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle.kts', 'android/gradle.properties', 'pubspec.lock') }}
           restore-keys: gradle-${{ runner.os }}-
       # The release build type, signed with the generated debug key (no secrets on pull requests).
-      - run: flutter build apk --release
+      # Once more if it fails: the first build downloads the NDK, and a broken download fails it.
+      - run: flutter build apk --release || flutter build apk --release
       - uses: actions/upload-artifact@v7
         with:
           name: anymobile-apk
